@@ -15,3 +15,11 @@
 *.exe
 *.out
 *.app
+
+# Image files
+*.tga
+*.jpg
+*.jpeg
+
+# checksum files
+*.md5

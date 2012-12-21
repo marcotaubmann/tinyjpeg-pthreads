@@ -169,6 +169,9 @@ int convert_one_image(const char *infilename, const char *outfilename)
   //decode_jpeg_task can be performed in parallel for the case with markers
   for(i=0; i<ntasks; i++) {
     create_jdec_task(jpc, &jtask, i);
+  }
+
+  for(i=0; i<ntasks; i++) {
     decode_jpeg_task(jdc, &jtask);
   }
 

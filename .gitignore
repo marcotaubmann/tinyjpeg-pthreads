@@ -23,3 +23,9 @@
 
 # checksum files
 *.md5
+
+# editor files
+*.swp
+
+# the executable
+tinyjpeg

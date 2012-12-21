@@ -1,1 +1,20 @@
-Basic version without improvements: 1.49user 0.08system 0:01.58elapsed 99%CPU
+-O2: time ./tinyjpeg ../test_images/earth-8k-markers.jpg /dev/null
+	
+	v1: pthreads first version with static work distribution and the rest for the last task:
+		 time ./tinyjpeg ../test_images/earth-8k-markers.jpg /dev/null
+		 Decoding JPEG image...
+		 threads=8, tasks=250, tasks_per_thread=31
+
+		 real    0m0.377s
+		 user    0m2.244s
+		 sys     0m0.080s
+
+	tinyjpeg_basic:
+		time ./tinyjpeg ../test_images/earth-8k-markers.jpg /dev/null
+		Decoding JPEG image...
+
+		real    0m1.617s
+		user    0m1.524s
+		sys     0m0.088s
+
+	

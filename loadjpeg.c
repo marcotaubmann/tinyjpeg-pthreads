@@ -35,9 +35,21 @@
 #include <string.h>
 #include <sys/time.h>
 
+#include <pthread.h>
+
 #include "tinyjpeg.h"
 
 #include "timeutil.h"
+
+#define NTHREADS 8
+
+struct decode_thread_parameters {
+	int id;
+	int first_task;
+	int last_task;
+  	struct jdec_task *jtasks;
+  	struct jpeg_decode_context **jdcs;
+};
 
 
 static void exitmessage(const char *message)
@@ -103,6 +115,23 @@ void write_next_mcu_line(struct write_context *wc){
   wc->rgb_data += bytes_per_mcu_line;
 }
 
+void *decode_thread(void *arg){
+	int i;
+	struct decode_thread_parameters *p = (struct decode_thread_parameters*)arg;
+
+//	printf("decode_thread id=%d, first=%d, last=%d\n", p->id, p->first_task, p->last_task);
+	
+	for(i=p->first_task; i<=p->last_task; i++) {
+		//printf("decode_thread id=%d, jdc=%p, jtask=%p, i=%d\n",
+		   //p->id, (p->jdcs[i]), &(p->jtasks[i]), i);
+		decode_jpeg_task((p->jdcs[i]), &(p->jtasks[i]));
+	}
+
+	//printf("decode_thread id=%d finished\n", p->id);
+
+	return NULL;
+}
+
 /**
 * Load one jpeg image, and decompress it, and save the result.
 */
@@ -110,10 +139,10 @@ int convert_one_image(const char *infilename, const char *outfilename)
 {
   FILE *fp;
   struct jpeg_parse_context *jpc;
-  struct jpeg_decode_context *jdc=NULL;
+  struct jpeg_decode_context **jdcs;
   struct write_context* wc;
 
-  struct jdec_task jtask;
+  struct jdec_task *jtasks;
 
   unsigned int length_of_file;
   int width, height;
@@ -123,6 +152,13 @@ int convert_one_image(const char *infilename, const char *outfilename)
   int i;
   int ntasks;
   int read;
+
+  int nthreads = NTHREADS;
+  int thread_ids[nthreads];
+  pthread_t threads[nthreads];
+  struct decode_thread_parameters dec_thr_pars[nthreads];
+
+  int tasks_per_thread;
 
   /* Load the Jpeg into memory */
   fp = fopen(infilename, "rb");
@@ -160,19 +196,39 @@ int convert_one_image(const char *infilename, const char *outfilename)
     ntasks = 1;
     jpc->restart_interval = mcus_in_height * mcus_in_width;
   }
-  jdc = create_jpeg_decode_context(jpc, rgb_data);
   wc = create_write_context(jpc, outfilename, rgb_data);
 
   printf("Decoding JPEG image...\n");
 
-  //create_jdec_task needs to be performed sequentially
-  //decode_jpeg_task can be performed in parallel for the case with markers
+  jtasks = (struct jdec_task *)malloc(ntasks*sizeof(struct jdec_task));
+  if (jtasks == NULL)
+    exitmessage("Not enough memory  to alloc the structure need for create tasks\n");
+
+	  jdcs = (struct jpeg_decode_context **)malloc(ntasks*sizeof(struct jpeg_decode_context *));
+	  if (jdcs == NULL)
+		  exitmessage("Not enough memory to alloc the structure need for all parallel jdcs\n");
+
+  //create own task variable and own jdc for each task
   for(i=0; i<ntasks; i++) {
-    create_jdec_task(jpc, &jtask, i);
+    create_jdec_task(jpc, &(jtasks[i]), i);
+    jdcs[i] = create_jpeg_decode_context(jpc, rgb_data);
   }
 
-  for(i=0; i<ntasks; i++) {
-    decode_jpeg_task(jdc, &jtask);
+  // divide the tasks equally among the threads, but last thread has to do more if there is a rest
+  tasks_per_thread = ntasks/nthreads;
+  printf("threads=%d, tasks=%d, tasks_per_thread=%d\n", nthreads, ntasks, tasks_per_thread);
+  for (i=0; i<nthreads; i++){
+	  thread_ids[i] = i;
+	  dec_thr_pars[i].id = thread_ids[i];
+	  dec_thr_pars[i].first_task = i*tasks_per_thread;
+	  dec_thr_pars[i].last_task = (i<nthreads-1)?(i+1)*tasks_per_thread - 1 : ntasks-1;
+	  dec_thr_pars[i].jtasks = jtasks;
+	  dec_thr_pars[i].jdcs = jdcs;
+	  pthread_create(&threads[i], NULL, decode_thread, &dec_thr_pars[i]);
+
+  }
+  for(i=0; i<nthreads;i++){
+	pthread_join(threads[i], NULL);
   }
 
   //file write could already start before the complete image is decoded
@@ -185,7 +241,10 @@ int convert_one_image(const char *infilename, const char *outfilename)
   free(rgb_data);
 
   destroy_jpeg_parse_context(jpc);
-  destroy_jpeg_decode_context(jdc);
+  for(i=0; i<ntasks; i++) {
+    destroy_jpeg_decode_context(jdcs[i]);
+  }
+  free(jdcs);
   destroy_write_context(wc);
 
   return 0;

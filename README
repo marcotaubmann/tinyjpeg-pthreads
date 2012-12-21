@@ -3,4 +3,5 @@ tinyjpeg-pthreads
 
 The repository for the MCA-Lab part 2.
 
-Marco added this line local.
+1. benchmark.txt
+	The benchmark file tracks the improvements for each version to be commited, starting with the latest version, the comment for the commit should be the same as used in the benchmark file

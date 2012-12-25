@@ -1,13 +1,21 @@
 -O2: time ./tinyjpeg ../test_images/earth-8k-markers.jpg /dev/null
 	
-	v1: pthreads first version with static work distribution and the rest for the last task:
-		 time ./tinyjpeg ../test_images/earth-8k-markers.jpg /dev/null
-		 Decoding JPEG image...
-		 threads=8, tasks=250, tasks_per_thread=31
+	v2: markers, add load-balancing through chunk_distributor (use 5 jtasks per chunk)
+		time ./tinyjpeg ../test_images/earth-8k-markers.jpg /dev/null
+		Decoding JPEG image...
 
-		 real    0m0.377s
-		 user    0m2.244s
-		 sys     0m0.080s
+		real    0m0.350s
+		user    0m2.268s
+		sys     0m0.112s
+
+	v1: pthreads first version with static work distribution and the rest for the last task:
+		time ./tinyjpeg ../test_images/earth-8k-markers.jpg /dev/null
+		Decoding JPEG image...
+		threads=8, tasks=250, tasks_per_thread=31
+
+		real    0m0.377s
+		user    0m2.244s
+		sys     0m0.080s
 
 	tinyjpeg_basic:
 		time ./tinyjpeg ../test_images/earth-8k-markers.jpg /dev/null

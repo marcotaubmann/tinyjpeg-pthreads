@@ -5,7 +5,7 @@ RM = rm -f
 MD5 = md5sum
 TIME = time
 
-SRC = tinyjpeg.c loadjpeg.c tinyjpeg-parse.c jidctflt.c conv_yuvbgr.c huffman.c timeutil.c
+SRC = tinyjpeg.c loadjpeg.c tinyjpeg-parse.c jidctflt.c conv_yuvbgr.c huffman.c timeutil.c chunk_distributor.c
 OBJ = $(SRC:.c=.o)
 EXEC = tinyjpeg
 

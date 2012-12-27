@@ -1,4 +1,4 @@
-CFLAGS = -Wall -Wextra -O2 -g -DDEBUG=0
+CFLAGS = -Wall -Wextra -O0 -g -DDEBUG=0
 LDFLAGS := -pthread
 CC = gcc
 RM = rm -f
@@ -26,6 +26,7 @@ $(EXEC): $(OBJ)
 	$(CC) -o $@ $(LDFLAGS) $^
 
 %.o: %.c
+	@echo "------------------------------------------------------------------"
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:

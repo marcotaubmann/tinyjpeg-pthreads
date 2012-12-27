@@ -40,6 +40,126 @@
 #include "tinyjpeg.h"
 #include "tinyjpeg-internal.h"
 
+static void exitmessage(const char *message)
+{
+  printf("%s\n", message);
+  exit(0);
+}
+
+enum idct_data_buffer_element_type {DATA, FINISH};
+
+struct idct_data_buffer_element {
+	enum idct_data_buffer_element_type type;
+	struct idct_data idata;
+	struct idct_data_buffer_element *next;
+};
+
+struct idct_data_buffer {
+	int elements;
+	struct idct_data_buffer_element *first;
+	struct idct_data_buffer_element *last;
+	pthread_mutex_t *mutex;
+	pthread_cond_t *cond;
+};
+
+void idct_data_buffer_init(struct idct_data_buffer *b){
+	b->elements = 0;
+	b->first = NULL;
+	b->last = NULL;
+	pthread_mutex_init(b->mutex, NULL);
+	pthread_cond_init(b->cond, NULL);
+}
+
+void idct_data_buffer_destroy(struct idct_data_buffer *b){
+	pthread_mutex_destroy(b->mutex);
+	pthread_cond_destroy(b->cond);
+}
+
+void idct_data_buffer_add(
+	struct idct_data_buffer *b,
+	struct idct_data_buffer_element *e )
+{
+	e->next = NULL;
+	pthread_mutex_lock(b->mutex);
+	
+	if(b->elements == 0){
+		b->first = e;
+		b->last = e;
+	} else {
+		b->last->next = e;
+		b->last = e;
+	}
+	b->elements++;
+
+	pthread_cond_signal(b->cond);
+	pthread_mutex_unlock(b->mutex);
+}
+
+struct idct_data_buffer_element* idct_data_buffer_extract(struct idct_data_buffer *b){
+	struct idct_data_buffer_element *e;
+
+	pthread_mutex_lock(b->mutex);
+	while (b->elements == 0) {
+		pthread_cond_wait(b->cond, b->mutex);
+	}
+
+	e = b->first;
+	if(b->elements == 1) {
+		b->first = NULL;
+		b->last = NULL;
+	} else {
+		b->first = b->first->next;
+	}
+	e->next = NULL;
+	b->elements--;
+
+	pthread_mutex_unlock(b->mutex);
+
+	return e;
+}
+
+struct huffman_thread_parameters {
+	int id;
+	struct jpeg_decode_context *jdc;
+	int mcus_posy;
+	int mcus_posx;
+	int mcus_in_height;
+  	struct huffman_context *hc;
+	struct jdec_task *jtask;
+	struct idct_data_buffer *ibuffer;
+};
+
+void *huffman_thread (void *arg) {
+	struct huffman_thread_parameters *p = (struct huffman_thread_parameters*)arg;
+	int j;
+	struct idct_data_buffer_element *e;
+
+	for (j=0; j<p->jdc->restart_interval && p->mcus_posy< p->mcus_in_height; j++) {
+	  e = (struct idct_data_buffer_element *)malloc(sizeof(struct idct_data_buffer_element *));
+	  if (e == NULL)
+    		exitmessage("Not enough memory to alloc new idata buffer element\n");
+	  free(e); //move this line to future idct_thread
+	  e->type = DATA;
+          process_huffman_mcu(p->hc, p->jtask, &(e->idata));
+	  idct_data_buffer_add(p->ibuffer, e);
+      
+          p->mcus_posx++;
+          if (p->mcus_posx >= p->jdc->mcus_in_width){
+            p->mcus_posy++;
+            p->mcus_posx = 0;
+          }
+        }
+
+	e = (struct idct_data_buffer_element *)malloc(sizeof(struct idct_data_buffer_element *));
+	if (e == NULL)
+    		exitmessage("Not enough memory to alloc new idata buffer element\n");
+	free(e); //move this line to future idct_thread
+	e->type = FINISH;
+	idct_data_buffer_add(p->ibuffer, e);
+	
+	return NULL;
+}
+
 /* Global variable to return the last error found while deconding */
 char error_string[256];
 

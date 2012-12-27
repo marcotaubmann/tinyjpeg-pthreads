@@ -60,6 +60,7 @@ void destroy_huffman_context(struct huffman_context *hc);
 //tinyjpeg.c
 const char *tinyjpeg_get_errorstring();
 void decode_jpeg_task(struct jpeg_decode_context *jdc, struct jdec_task *jtask);
+void decode_jpeg_task_pipeline(struct jpeg_decode_context *jdc, struct jdec_task *jtask);
 struct jpeg_decode_context *create_jpeg_decode_context(struct jpeg_parse_context *jpc, uint8_t *rgb_data);
 void destroy_jpeg_decode_context(struct jpeg_decode_context* jdc);
 

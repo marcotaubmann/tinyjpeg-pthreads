@@ -205,30 +205,37 @@ int convert_one_image(const char *infilename, const char *outfilename)
   if (jdcs == NULL)
 	  exitmessage("Not enough memory to alloc the structure need for all parallel jdcs\n");
 
-  cd = (chunk_distributor_t *)malloc(sizeof(chunk_distributor_t));
-  if (cd == NULL)
-    exitmessage("Not enough memory to alloc the chunk distributor\n");
-
   //create own task variable and own jdc for each task
   for(i=0; i<ntasks; i++) {
     create_jdec_task(jpc, &(jtasks[i]), i);
     jdcs[i] = create_jpeg_decode_context(jpc, rgb_data);
   }
 
-  chunk_distributor_init (cd, ntasks);
+  if (ntasks > 1) { // parallel by indepentent tasks
+	  cd = (chunk_distributor_t *)malloc(sizeof(chunk_distributor_t));
+	  if (cd == NULL)
+	    exitmessage("Not enough memory to alloc the chunk distributor\n");
 
-  // divide the tasks equally among the threads, but last thread has to do more if there is a rest
-  for (i=0; i<nthreads; i++){
-	  thread_ids[i] = i;
-	  dec_thr_pars[i].id = thread_ids[i];
-	  dec_thr_pars[i].cd = cd;
-	  dec_thr_pars[i].jtasks = jtasks;
-	  dec_thr_pars[i].jdcs = jdcs;
-	  pthread_create(&threads[i], NULL, decode_thread, &dec_thr_pars[i]);
-  }
+	  chunk_distributor_init (cd, ntasks);
 
-  for(i=0; i<nthreads;i++){
-	pthread_join(threads[i], NULL);
+	  // divide the tasks equally among the threads, but last thread has to do more if there is a rest
+	  for (i=0; i<nthreads; i++){
+		  thread_ids[i] = i;
+		  dec_thr_pars[i].id = thread_ids[i];
+		  dec_thr_pars[i].cd = cd;
+		  dec_thr_pars[i].jtasks = jtasks;
+		  dec_thr_pars[i].jdcs = jdcs;
+		  pthread_create(&threads[i], NULL, decode_thread, &dec_thr_pars[i]);
+	  }
+
+	  for(i=0; i<nthreads;i++){
+		pthread_join(threads[i], NULL);
+	  }
+
+  	  free(cd);
+
+  } else { // parallel by pipeline
+	decode_jpeg_task_pipeline(jdcs[0], &(jtasks[0]));
   }
 
   //file write could already start before the complete image is decoded
@@ -239,8 +246,6 @@ int convert_one_image(const char *infilename, const char *outfilename)
 
   free(buf);
   free(rgb_data);
-
-  free(cd);
 
   destroy_jpeg_parse_context(jpc);
   for(i=0; i<ntasks; i++) {

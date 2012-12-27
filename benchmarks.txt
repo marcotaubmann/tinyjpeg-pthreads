@@ -1,6 +1,6 @@
 -O2: time ./tinyjpeg ../test_images/earth-8k-markers.jpg /dev/null
 	
-	v2: markers, add load-balancing through chunk_distributor (use 5 jtasks per chunk)
+	v2: add load-balancing for markers through chunk_distributor (use 5 jtasks per chunk)
 		time ./tinyjpeg ../test_images/earth-8k-markers.jpg /dev/null
 		Decoding JPEG image...
 

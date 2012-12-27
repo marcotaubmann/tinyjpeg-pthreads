@@ -47,6 +47,43 @@ const char *tinyjpeg_get_errorstring() {
   return error_string;
 }
 
+void decode_jpeg_task_pipeline(struct jpeg_decode_context *jdc, struct jdec_task *jtask){
+  struct huffman_context *hc = jdc->hc;
+  struct idct_context *ic = jdc->ic;
+  struct cc_context *cc = jdc->cc;
+
+  struct idct_data *idata = &jdc->idata;
+  struct yuv_data *yuvdata = &jdc->yuvdata;
+
+  int i, j;
+  int mcus_posx=0;
+  int mcus_posy=0;
+  unsigned int bytes_per_blocklines= jdc->width *3*16;
+  unsigned int bytes_per_mcu = 3*16;
+
+  for (i=0; i<COMPONENTS; i++)
+    hc->component_infos[i].previous_DC = 0;
+
+  cc->rgb_data = cc->base + jtask->mcus_posy * bytes_per_blocklines + jtask->mcus_posx * bytes_per_mcu;
+  mcus_posx = jtask->mcus_posx;
+  mcus_posy = jtask->mcus_posy;
+
+  for (j=0; j<jdc->restart_interval && mcus_posy< cc->mcus_in_height; j++) {
+    process_huffman_mcu(hc, jtask, idata);
+    idct_mcu(ic, idata, yuvdata);
+    convert_yuv_bgr(cc, yuvdata);
+
+    cc->rgb_data += bytes_per_mcu;
+    mcus_posx++;
+    if (mcus_posx >= jdc->mcus_in_width){
+      mcus_posy++;
+      mcus_posx = 0;
+      cc->rgb_data += (bytes_per_blocklines - jdc->width*3);
+    }
+  }
+
+}
+
 void decode_jpeg_task(struct jpeg_decode_context *jdc, struct jdec_task *jtask){
   struct huffman_context *hc = jdc->hc;
   struct idct_context *ic = jdc->ic;

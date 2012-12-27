@@ -10,7 +10,7 @@ OBJ = $(SRC:.c=.o)
 EXEC = tinyjpeg
 
 IMPATH = ../test_images
-INPUT = earth-8k-markers
+INPUT = earth-8k
 
 
 INFILE  = $(IMPATH)/$(INPUT).jpg

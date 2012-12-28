@@ -87,13 +87,23 @@ struct huffman_thread_parameters {
 	struct idct_data_buffer *ibuffer;
 };
 
-struct idct_thread_parameters{
+struct idct_thread_parameters {
 	int id;
 	struct idct_context *ic;
 	struct idct_data_buffer *ibuffer;
 	struct yuv_data_buffer *yuvbuffer;
 };
 
+struct convert_thread_parameters {
+	int id;
+	struct cc_context *cc;
+	int bytes_per_mcu;
+	int mcus_posx;
+	int mcus_posy;
+	struct jpeg_decode_context *jdc;
+	int bytes_per_blocklines;
+	struct yuv_data_buffer *yuvbuffer;
+};
 // --------------------------------------------------------
 // Function definitions
 // --------------------------------------------------------
@@ -280,6 +290,36 @@ void *idct_thread(void *arg){
 	return NULL;
 }
 
+// --------------------------------------------------------
+void *convert_thread(void*arg){
+	struct convert_thread_parameters *p = (struct convert_thread_parameters*)arg;
+	struct yuv_data_buffer_element *yuv_element;
+	int extract_next;
+
+	do {
+		yuv_element = yuv_data_buffer_extract(p->yuvbuffer);
+		if (yuv_element == NULL)
+			exitmessage("yuv_data_buffer returned empty element\n");
+
+		if(yuv_element->type == DATA) {
+			convert_yuv_bgr(p->cc, &(yuv_element->yuvdata));
+
+			p->cc->rgb_data += p->bytes_per_mcu;
+			p->mcus_posx++;
+			if (p->mcus_posx >= p->jdc->mcus_in_width){
+				p->mcus_posy++;
+				p->mcus_posx = 0;
+				p->cc->rgb_data += (p->bytes_per_blocklines - p->jdc->width*3);
+			}
+			extract_next = 1;
+		} else {
+			extract_next = 0;
+		}
+		free(yuv_element);
+	} while (extract_next);
+
+	return NULL;
+}
 // --------------------------------------------------------
 void decode_jpeg_task_pipeline(struct jpeg_decode_context *jdc, struct jdec_task *jtask){
   struct huffman_context *hc = jdc->hc;

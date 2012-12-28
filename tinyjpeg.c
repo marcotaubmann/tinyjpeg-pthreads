@@ -40,16 +40,14 @@
 #include "tinyjpeg.h"
 #include "tinyjpeg-internal.h"
 
-static void exitmessage(const char *message)
-{
-  printf("%s\n", message);
-  exit(0);
-}
+enum element_type {DATA, FINISH};
 
-enum idct_data_buffer_element_type {DATA, FINISH};
+// --------------------------------------------------------
+// struct definitions
+// --------------------------------------------------------
 
 struct idct_data_buffer_element {
-	enum idct_data_buffer_element_type type;
+	enum element_type type;
 	struct idct_data idata;
 	struct idct_data_buffer_element *next;
 };
@@ -62,6 +60,50 @@ struct idct_data_buffer {
 	pthread_cond_t *cond;
 };
 
+// --------------------------------------------------------
+struct yuv_data_buffer_element {
+	enum element_type type;
+	struct yuv_data yuvdata;
+	struct yuv_data_buffer_element *next;
+};
+
+struct yuv_data_buffer {
+	int elements;
+	struct yuv_data_buffer_element *first;
+	struct yuv_data_buffer_element *last;
+	pthread_mutex_t *mutex;
+	pthread_cond_t *cond;
+};
+
+// --------------------------------------------------------
+struct huffman_thread_parameters {
+	int id;
+	struct jpeg_decode_context *jdc;
+	int mcus_posy;
+	int mcus_posx;
+	int mcus_in_height;
+  	struct huffman_context *hc;
+	struct jdec_task *jtask;
+	struct idct_data_buffer *ibuffer;
+};
+
+struct idct_thread_parameters{
+	int id;
+	struct idct_context *ic;
+	struct idct_data_buffer *ibuffer;
+	struct yuv_data_buffer *yuvbuffer;
+};
+
+// --------------------------------------------------------
+// Function definitions
+// --------------------------------------------------------
+
+static void exitmessage(const char *message)
+{
+  printf("%s\n", message);
+  exit(0);
+}
+// --------------------------------------------------------
 void idct_data_buffer_init(struct idct_data_buffer *b){
 	b->elements = 0;
 	b->first = NULL;
@@ -73,6 +115,7 @@ void idct_data_buffer_init(struct idct_data_buffer *b){
 void idct_data_buffer_destroy(struct idct_data_buffer *b){
 	pthread_mutex_destroy(b->mutex);
 	pthread_cond_destroy(b->cond);
+	free(b);
 }
 
 void idct_data_buffer_add(
@@ -118,17 +161,65 @@ struct idct_data_buffer_element* idct_data_buffer_extract(struct idct_data_buffe
 	return e;
 }
 
-struct huffman_thread_parameters {
-	int id;
-	struct jpeg_decode_context *jdc;
-	int mcus_posy;
-	int mcus_posx;
-	int mcus_in_height;
-  	struct huffman_context *hc;
-	struct jdec_task *jtask;
-	struct idct_data_buffer *ibuffer;
-};
+// --------------------------------------------------------
+void yuv_data_buffer_init(struct yuv_data_buffer *b) {
+	b->elements = 0;
+	b->first = NULL;
+	b->last = NULL;
+	pthread_mutex_init(b->mutex, NULL);
+	pthread_cond_init(b->cond, NULL);
+}
 
+void yuv_data_buffer_destroy(struct yuv_data_buffer *b){
+	pthread_mutex_destroy(b->mutex);
+	pthread_cond_destroy(b->cond);
+	free(b);
+}
+
+void yuv_data_buffer_add(
+	struct yuv_data_buffer *b,
+	struct yuv_data_buffer_element *e )
+{
+	e->next = NULL;
+	pthread_mutex_lock(b->mutex);
+	
+	if(b->elements == 0){
+		b->first = e;
+		b->last = e;
+	} else {
+		b->last->next = e;
+		b->last = e;
+	}
+	b->elements++;
+
+	pthread_cond_signal(b->cond);
+	pthread_mutex_unlock(b->mutex);
+}
+
+struct yuv_data_buffer_element* yuv_data_buffer_extract(struct yuv_data_buffer *b){
+	struct yuv_data_buffer_element *e;
+
+	pthread_mutex_lock(b->mutex);
+	while (b->elements == 0) {
+		pthread_cond_wait(b->cond, b->mutex);
+	}
+
+	e = b->first;
+	if(b->elements == 1) {
+		b->first = NULL;
+		b->last = NULL;
+	} else {
+		b->first = b->first->next;
+	}
+	b->elements--;
+
+	pthread_mutex_unlock(b->mutex);
+
+	e->next = NULL;
+	return e;
+}
+
+// --------------------------------------------------------
 void *huffman_thread (void *arg) {
 	struct huffman_thread_parameters *p = (struct huffman_thread_parameters*)arg;
 	int j;
@@ -153,20 +244,43 @@ void *huffman_thread (void *arg) {
 	e = (struct idct_data_buffer_element *)malloc(sizeof(struct idct_data_buffer_element *));
 	if (e == NULL)
     		exitmessage("Not enough memory to alloc new idata buffer element\n");
-	free(e); //move this line to future idct_thread
 	e->type = FINISH;
 	idct_data_buffer_add(p->ibuffer, e);
 	
 	return NULL;
 }
 
-/* Global variable to return the last error found while deconding */
-char error_string[256];
+// --------------------------------------------------------
+void *idct_thread(void *arg){
+	struct idct_thread_parameters *p = (struct idct_thread_parameters*)arg;
+	struct idct_data_buffer_element *idct_element;
+	struct yuv_data_buffer_element *yuv_element;
+	int extract_next;
 
-const char *tinyjpeg_get_errorstring() {
-  return error_string;
+	do {
+		idct_element = idct_data_buffer_extract(p->ibuffer);
+		if (idct_element == NULL)
+			exitmessage("idct_data_buffer returned empty element\n");
+		
+		yuv_element = (struct yuv_data_buffer_element *)malloc(sizeof(struct yuv_data_buffer_element *));
+		if (yuv_element == NULL)
+			exitmessage("Not enough memory to alloc new yuvdata buffer element\n");
+		yuv_element->type = idct_element->type;
+		if (idct_element->type == DATA){
+			idct_mcu(p->ic, &(idct_element->idata), &(yuv_element->yuvdata));
+			extract_next = 1;
+		} else {
+			extract_next = 0;
+		}
+		yuv_data_buffer_add(p->yuvbuffer, yuv_element);
+
+		free(idct_element);
+	} while (extract_next);
+
+	return NULL;
 }
 
+// --------------------------------------------------------
 void decode_jpeg_task_pipeline(struct jpeg_decode_context *jdc, struct jdec_task *jtask){
   struct huffman_context *hc = jdc->hc;
   struct idct_context *ic = jdc->ic;
@@ -202,6 +316,17 @@ void decode_jpeg_task_pipeline(struct jpeg_decode_context *jdc, struct jdec_task
     }
   }
 
+}
+
+// --------------------------------------------------------
+// original stuff
+// --------------------------------------------------------
+
+/* Global variable to return the last error found while deconding */
+char error_string[256];
+
+const char *tinyjpeg_get_errorstring() {
+  return error_string;
 }
 
 void decode_jpeg_task(struct jpeg_decode_context *jdc, struct jdec_task *jtask){

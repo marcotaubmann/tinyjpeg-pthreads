@@ -1,3 +1,28 @@
+// ========================================================
+// without markers
+// ========================================================
+-O2: time ./tinyjpeg ../test_images/earth-8k.jpg /dev/null
+
+	pipeline implemented
+		time ./tinyjpeg ../test_images/earth-8k.jpg /dev/null
+		Decoding JPEG image...
+
+		real    0m0.848s
+		user    0m1.948s
+		sys     0m0.288s
+
+	tinyjpeg_base: (not in the git repository)
+		time ./tinyjpeg ../test_images/earth-8k.jpg /dev/null
+		Decoding JPEG image...
+
+		real    0m1.614s
+		user    0m1.532s
+		sys     0m0.076s
+
+
+// ========================================================
+// with markers
+// ========================================================
 -O2: time ./tinyjpeg ../test_images/earth-8k-markers.jpg /dev/null
 	
 	v2: add load-balancing for markers through chunk_distributor (use 5 jtasks per chunk)
@@ -17,7 +42,7 @@
 		user    0m2.244s
 		sys     0m0.080s
 
-	tinyjpeg_basic:
+	tinyjpeg_base: (not in the git repository)
 		time ./tinyjpeg ../test_images/earth-8k-markers.jpg /dev/null
 		Decoding JPEG image...
 

@@ -118,7 +118,15 @@ void idct_data_buffer_init(struct idct_data_buffer *b){
 	b->elements = 0;
 	b->first = NULL;
 	b->last = NULL;
+
+	b->mutex = (pthread_mutex_t *)malloc(sizeof(pthread_mutex_t));
+	if (b->mutex == NULL)
+		exitmessage("Not enough memory to alloc new mutex for idct buffer\n");
 	pthread_mutex_init(b->mutex, NULL);
+
+	b->cond = (pthread_cond_t *)malloc(sizeof(pthread_cond_t));
+	if (b->cond == NULL)
+		exitmessage("Not enough memory to alloc new cond for idct buffer\n");
 	pthread_cond_init(b->cond, NULL);
 }
 
@@ -176,7 +184,15 @@ void yuv_data_buffer_init(struct yuv_data_buffer *b) {
 	b->elements = 0;
 	b->first = NULL;
 	b->last = NULL;
+
+	b->mutex = (pthread_mutex_t *)malloc(sizeof(pthread_mutex_t));
+	if (b->mutex == NULL)
+		exitmessage("Not enough memory to alloc new mutex for yuv buffer\n");
 	pthread_mutex_init(b->mutex, NULL);
+
+	b->cond = (pthread_cond_t *)malloc(sizeof(pthread_cond_t));
+	if (b->cond == NULL)
+		exitmessage("Not enough memory to alloc new cond for yuv buffer\n");
 	pthread_cond_init(b->cond, NULL);
 }
 
@@ -236,10 +252,9 @@ void *huffman_thread (void *arg) {
 	struct idct_data_buffer_element *e;
 
 	for (j=0; j<p->jdc->restart_interval && p->mcus_posy< p->mcus_in_height; j++) {
-	  e = (struct idct_data_buffer_element *)malloc(sizeof(struct idct_data_buffer_element *));
+	  e = (struct idct_data_buffer_element *)malloc(sizeof(struct idct_data_buffer_element));
 	  if (e == NULL)
     		exitmessage("Not enough memory to alloc new idata buffer element\n");
-	  free(e); //move this line to future idct_thread
 	  e->type = DATA;
           process_huffman_mcu(p->hc, p->jtask, &(e->idata));
 	  idct_data_buffer_add(p->ibuffer, e);
@@ -251,7 +266,7 @@ void *huffman_thread (void *arg) {
           }
         }
 
-	e = (struct idct_data_buffer_element *)malloc(sizeof(struct idct_data_buffer_element *));
+	e = (struct idct_data_buffer_element *)malloc(sizeof(struct idct_data_buffer_element));
 	if (e == NULL)
     		exitmessage("Not enough memory to alloc new idata buffer element\n");
 	e->type = FINISH;
@@ -272,7 +287,7 @@ void *idct_thread(void *arg){
 		if (idct_element == NULL)
 			exitmessage("idct_data_buffer returned empty element\n");
 		
-		yuv_element = (struct yuv_data_buffer_element *)malloc(sizeof(struct yuv_data_buffer_element *));
+		yuv_element = (struct yuv_data_buffer_element *)malloc(sizeof(struct yuv_data_buffer_element));
 		if (yuv_element == NULL)
 			exitmessage("Not enough memory to alloc new yuvdata buffer element\n");
 		yuv_element->type = idct_element->type;
@@ -326,14 +341,20 @@ void decode_jpeg_task_pipeline(struct jpeg_decode_context *jdc, struct jdec_task
   struct idct_context *ic = jdc->ic;
   struct cc_context *cc = jdc->cc;
 
-  struct idct_data *idata = &jdc->idata;
-  struct yuv_data *yuvdata = &jdc->yuvdata;
-
-  int i, j;
+  int i;
   int mcus_posx=0;
   int mcus_posy=0;
   unsigned int bytes_per_blocklines= jdc->width *3*16;
   unsigned int bytes_per_mcu = 3*16;
+
+  struct idct_data_buffer *ibuffer;
+  struct yuv_data_buffer *yuvbuffer;
+  struct huffman_thread_parameters hp;
+  struct idct_thread_parameters ip;
+  struct convert_thread_parameters cp;
+  pthread_t huf_thread;
+  pthread_t idc_thread;
+  pthread_t con_thread;
 
   for (i=0; i<COMPONENTS; i++)
     hc->component_infos[i].previous_DC = 0;
@@ -342,19 +363,43 @@ void decode_jpeg_task_pipeline(struct jpeg_decode_context *jdc, struct jdec_task
   mcus_posx = jtask->mcus_posx;
   mcus_posy = jtask->mcus_posy;
 
-  for (j=0; j<jdc->restart_interval && mcus_posy< cc->mcus_in_height; j++) {
-    process_huffman_mcu(hc, jtask, idata);
-    idct_mcu(ic, idata, yuvdata);
-    convert_yuv_bgr(cc, yuvdata);
+  ibuffer = (struct idct_data_buffer *)malloc(sizeof(struct idct_data_buffer));
+  if (ibuffer == NULL) exitmessage("Not enough memory to alloc new ibuffer\n");
+  idct_data_buffer_init(ibuffer);
 
-    cc->rgb_data += bytes_per_mcu;
-    mcus_posx++;
-    if (mcus_posx >= jdc->mcus_in_width){
-      mcus_posy++;
-      mcus_posx = 0;
-      cc->rgb_data += (bytes_per_blocklines - jdc->width*3);
-    }
-  }
+  hp.id = 0;
+  hp.jdc = jdc;
+  hp.mcus_posx = mcus_posx;
+  hp.mcus_posy = mcus_posy;
+  hp.mcus_in_height = cc->mcus_in_height;
+  hp.hc = hc;
+  hp.jtask = jtask;
+  hp.ibuffer = ibuffer;
+  pthread_create(&huf_thread, NULL, huffman_thread, &hp);
+
+  yuvbuffer = (struct yuv_data_buffer *)malloc(sizeof(struct yuv_data_buffer));
+  if (yuvbuffer == NULL) exitmessage("Not enough memory to alloc new yuvbuffer\n");
+  yuv_data_buffer_init(yuvbuffer);
+
+  ip.id = 1;
+  ip.ic = ic;
+  ip.ibuffer = ibuffer;
+  ip.yuvbuffer = yuvbuffer;
+  pthread_create(&idc_thread, NULL, idct_thread, &ip);
+
+  cp.id = 2;
+  cp.cc = cc;
+  cp.bytes_per_mcu = bytes_per_mcu;
+  cp.mcus_posx = mcus_posx;
+  cp.mcus_posy = mcus_posy;
+  cp.jdc = jdc;
+  cp.bytes_per_blocklines = bytes_per_blocklines;
+  cp.yuvbuffer = yuvbuffer;
+  pthread_create(&con_thread, NULL, convert_thread, &cp);
+
+  pthread_join(huf_thread, NULL);
+  pthread_join(idc_thread, NULL);
+  pthread_join(con_thread, NULL);
 
 }
 

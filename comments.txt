@@ -1,0 +1,19 @@
+MCA-LAB Assignment 2 - PThreads
+
+
+Haifeng Gao, ID: 342849
+Marco Taubmann, ID: 319326
+
+==================================================
+Usage
+==================================================
+use commond "make both" to run all the test.
+Read Makefile for more detail.
+ 
+
+
+==================================================
+Benchmarks
+==================================================
+
+the result of benchmark see "benchmarks.txt" file
